@@ -7,7 +7,13 @@ fn handle_client(mut stream: TcpStream) {
     let mut buf = [0; 140];
     let _ = stream.write(b"Name: ");
     let _ = stream.read(&mut buf);
-    let name = str::from_utf8(&buf).unwrap().trim_end();
+    let mut name = str::from_utf8(&buf).unwrap().to_owned();
+    println!("initial length: {}", name.len());
+    println!("Initial value: {:?}", name);
+    let len = name.trim_matches(&['\r', '\n'][..]).len();
+    name.truncate(len - 3);
+    println!("new length: {}", name.len());
+    println!("New value: {:?}", name);
 
     println!("{} has joined.", name);
     let greeting = format!("Hello {}\n", name);
