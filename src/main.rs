@@ -3,25 +3,35 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
 
+struct Session {
+    name: String,
+}
+
 fn handle_client(
     mut reader: BufReader<TcpStream>,
     mut writer: BufWriter<TcpStream>,
-    tx: Sender<String>,
+    tx: Sender<Session>,
 ) {
+    // Get user's name (later: do some kind of auth)
     let mut name = String::new();
-    let _ = writer.write(b"Name: ");
-    writer.flush();
-    let _ = reader.read_line(&mut name);
+    writer.write(b"Name: ").unwrap();
+    writer.flush().unwrap();
+    reader.read_line(&mut name).unwrap();
     let len = name.trim_matches(&['\r', '\n'][..]).len();
     name.truncate(len);
 
+    // Greet user
     println!("Thread says: {} has joined.", name);
     let greeting = format!("Hello {}\n", name);
-    tx.send(name).unwrap();
-    let _ = writer.write(greeting.as_bytes());
+    let join_msg = format!("{} joined!", name);
+
+    // Initialize session
+    let session = Session { name: name };
+
+    tx.send(session).unwrap();
 }
 
-fn listen(sock: TcpListener, tx: Sender<String>) {
+fn listen(sock: TcpListener, tx: Sender<Session>) {
     for stream in sock.incoming() {
         let next_tx = tx.clone();
         match stream {
@@ -45,7 +55,7 @@ fn main() {
     println!("Starting up...");
     thread::spawn(move || listen(listener, tx));
 
-    for name in rx {
-        println!("main says: {} has joined.", name);
+    for session in rx {
+        println!("main says: {} has joined.", session.name);
     }
 }
