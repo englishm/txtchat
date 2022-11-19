@@ -1,23 +1,24 @@
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::str;
 use std::thread;
 
 fn handle_client(mut stream: TcpStream) {
-    let mut buf = [0; 140];
+    let mut name = String::new();
     let _ = stream.write(b"Name: ");
-    let _ = stream.read(&mut buf);
-    let mut name = str::from_utf8(&buf).unwrap().to_owned();
+    let mut input = BufReader::new(stream.try_clone().unwrap());
+    let mut output = BufWriter::new(stream);
+    let _ = input.read_line(&mut name);
     println!("initial length: {}", name.len());
     println!("Initial value: {:?}", name);
     let len = name.trim_matches(&['\r', '\n'][..]).len();
-    name.truncate(len - 3);
+    name.truncate(len);
     println!("new length: {}", name.len());
     println!("New value: {:?}", name);
 
     println!("{} has joined.", name);
     let greeting = format!("Hello {}\n", name);
-    let _ = stream.write(greeting.as_bytes());
+    let _ = output.write(greeting.as_bytes());
 }
 
 fn main() {
