@@ -9,12 +9,8 @@ fn handle_client(mut stream: TcpStream) {
     let mut input = BufReader::new(stream.try_clone().unwrap());
     let mut output = BufWriter::new(stream);
     let _ = input.read_line(&mut name);
-    println!("initial length: {}", name.len());
-    println!("Initial value: {:?}", name);
     let len = name.trim_matches(&['\r', '\n'][..]).len();
     name.truncate(len);
-    println!("new length: {}", name.len());
-    println!("New value: {:?}", name);
 
     println!("{} has joined.", name);
     let greeting = format!("Hello {}\n", name);
