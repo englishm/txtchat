@@ -1,9 +1,9 @@
-use std::net::{TcpListener, TcpStream};
-use std::thread;
 use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::str;
+use std::thread;
 
-fn handle_client(mut stream: TcpStream){
+fn handle_client(mut stream: TcpStream) {
     let mut buf = [0; 140];
     let _ = stream.write(b"Name: ");
     let _ = stream.read(&mut buf);
@@ -12,18 +12,15 @@ fn handle_client(mut stream: TcpStream){
     println!("{} has joined.", name);
     let greeting = format!("Hello {}\n", name);
     let _ = stream.write(greeting.as_bytes());
-
 }
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:2323").unwrap();
     println!("Starting up...");
-    for stream in listener.incoming(){
+    for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                thread::spawn(move|| {
-                    handle_client(stream)
-                });
+                thread::spawn(move || handle_client(stream));
             }
             Err(e) => { /* connection failed */ }
         }
