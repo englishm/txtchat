@@ -3,14 +3,18 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
 
-struct Session {
-    name: String,
+enum Message {
+    Session {
+        name: String,
+        reader: BufReader<TcpStream>,
+        writer: BufWriter<TcpStream>,
+    },
 }
 
 fn handle_client(
     mut reader: BufReader<TcpStream>,
     mut writer: BufWriter<TcpStream>,
-    tx: Sender<Session>,
+    tx: Sender<Message>,
 ) {
     // Get user's name (later: do some kind of auth)
     let mut name = String::new();
@@ -23,15 +27,20 @@ fn handle_client(
     // Greet user
     println!("Thread says: {} has joined.", name);
     let greeting = format!("Hello {}\n", name);
-    let join_msg = format!("{} joined!", name);
+    writer.write(greeting.as_bytes()).unwrap();
+    writer.flush().unwrap();
 
     // Initialize session
-    let session = Session { name: name };
+    let session = Message::Session {
+        name: name,
+        reader: reader,
+        writer: writer,
+    };
 
     tx.send(session).unwrap();
 }
 
-fn listen(sock: TcpListener, tx: Sender<Session>) {
+fn listen(sock: TcpListener, tx: Sender<Message>) {
     for stream in sock.incoming() {
         let next_tx = tx.clone();
         match stream {
@@ -56,6 +65,17 @@ fn main() {
     thread::spawn(move || listen(listener, tx));
 
     for session in rx {
-        println!("main says: {} has joined.", session.name);
+        match session {
+            Message::Session {
+                name,
+                reader: _,
+                writer: _,
+            } => {
+                println!("main says: {} has joined.", name);
+            }
+            _ => {
+                unimplemented!("handle non-session messages")
+            }
+        }
     }
 }
