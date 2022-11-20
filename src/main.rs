@@ -72,7 +72,7 @@ fn listen(sock: TcpListener, tx: Sender<ClientMessage>) {
     drop(sock);
 }
 
-fn chat_loop(session: ClientMessage, rx: Receiver<ServerMessage>) {
+fn chat_loop(session: ClientMessage, rx: Receiver<ServerMessage>, tx: Sender<ServerMessage>) {
     match session {
         ClientMessage::Session {
             name,
@@ -103,6 +103,12 @@ fn chat_loop(session: ClientMessage, rx: Receiver<ServerMessage>) {
                 reader.read_line(&mut input).unwrap();
                 let len = input.trim_matches(&['\r', '\n'][..]).len();
                 input.truncate(len);
+
+                if (input.len() != 0) {
+                    let msg = format!("{} sez '{}'", name, input);
+                    tx.send(ServerMessage::Output { message: msg }).unwrap();
+                    input.truncate(0);
+                }
 
                 // do something with input
             }
@@ -177,6 +183,7 @@ fn main() {
                 writer,
             } => {
                 let name_copy = name.clone(); // TODO fix lazy mess
+                let tx_copy = servermsg_tx.clone();
                 println!("main says: {} has joined.", name);
                 let (tx2, rx2) = channel();
                 registration_tx.send(RegistrationMessage::AddClient {
@@ -191,6 +198,7 @@ fn main() {
                             writer,
                         },
                         rx2,
+                        tx_copy,
                     )
                 });
                 servermsg_tx.send(ServerMessage::Output {
