@@ -76,29 +76,42 @@ fn chat_loop(session: ClientMessage, rx: Receiver<ServerMessage>) {
     match session {
         ClientMessage::Session {
             name,
-            reader,
+            mut reader,
             mut writer,
         } => {
             println!("Starting chat loop for {}...", name);
+            let prompt = format!("{}> ", name);
+            let mut input = String::new();
             loop {
                 // First, write out any message received from the server
                 match rx.try_recv() {
                     Ok(msg) => match msg {
                         ServerMessage::Output { message } => {
+                            println!("Writing out message from server");
                             let output = format!("\n{}\n", message);
                             writer.write(output.as_bytes()).unwrap();
+                            writer.flush();
                         }
                         _ => {}
                     },
                     _ => {}
                 }
+
+                // Then prompt and receive input
+                writer.write(prompt.as_bytes()).unwrap();
+                writer.flush();
+                reader.read_line(&mut input).unwrap();
+                let len = input.trim_matches(&['\r', '\n'][..]).len();
+                input.truncate(len);
+
+                // do something with input
             }
         }
         _ => {}
     }
 }
 
-fn dispatch(rx: Receiver<RegistrationMessage>) {
+fn dispatch(rx: Receiver<RegistrationMessage>, rx2: Receiver<ServerMessage>) {
     let mut clients: HashMap<String, Sender<ServerMessage>> = HashMap::new();
     loop {
         // Add/Remove clients
@@ -123,6 +136,25 @@ fn dispatch(rx: Receiver<RegistrationMessage>) {
             }
         }
 
+        match rx2.try_recv() {
+            Ok(msg) => {
+                println!("Received server message");
+
+                match msg {
+                    ServerMessage::Output { message } => {
+                        // iterate through current clients and send msg on their chans
+                        for (name, chan) in &clients {
+                            chan.send(ServerMessage::Output {
+                                message: message.clone(),
+                            })
+                            .unwrap();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
         // TODO: broadcast Output messages
     }
 }
@@ -134,7 +166,8 @@ fn main() {
     thread::spawn(move || listen(listener, tx));
 
     let (registration_tx, registration_rx) = channel();
-    thread::spawn(move || dispatch(registration_rx));
+    let (servermsg_tx, servermsg_rx) = channel();
+    thread::spawn(move || dispatch(registration_rx, servermsg_rx));
 
     for session in rx {
         match session {
@@ -143,6 +176,7 @@ fn main() {
                 reader,
                 writer,
             } => {
+                let name_copy = name.clone(); // TODO fix lazy mess
                 println!("main says: {} has joined.", name);
                 let (tx2, rx2) = channel();
                 registration_tx.send(RegistrationMessage::AddClient {
@@ -152,12 +186,15 @@ fn main() {
                 thread::spawn(move || {
                     chat_loop(
                         ClientMessage::Session {
-                            name,
+                            name: name.clone(),
                             reader,
                             writer,
                         },
                         rx2,
                     )
+                });
+                servermsg_tx.send(ServerMessage::Output {
+                    message: format!("{} joined!", name_copy),
                 });
             }
             _ => {
