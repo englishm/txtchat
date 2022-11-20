@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc::{channel, Sender, Receiver};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
 enum ClientMessage {
@@ -11,8 +12,16 @@ enum ClientMessage {
     },
 }
 enum ServerMessage {
-    Output {
-        message: String,
+    Output { message: String },
+}
+
+enum RegistrationMessage {
+    AddClient {
+        name: String,
+        tx: Sender<ServerMessage>,
+    },
+    RemoveClient {
+        name: String,
     },
 }
 
@@ -63,8 +72,59 @@ fn listen(sock: TcpListener, tx: Sender<ClientMessage>) {
     drop(sock);
 }
 
-fn chat_loop(session: ClientMessage, rx: Receiver<ServerMessage>){
-            unimplemented!("Do loops!")
+fn chat_loop(session: ClientMessage, rx: Receiver<ServerMessage>) {
+    match session {
+        ClientMessage::Session {
+            name,
+            reader,
+            mut writer,
+        } => {
+            println!("Starting chat loop for {}...", name);
+            loop {
+                // First, write out any message received from the server
+                match rx.try_recv() {
+                    Ok(msg) => match msg {
+                        ServerMessage::Output { message } => {
+                            let output = format!("\n{}\n", message);
+                            writer.write(output.as_bytes()).unwrap();
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn dispatch(rx: Receiver<RegistrationMessage>) {
+    let mut clients: HashMap<String, Sender<ServerMessage>> = HashMap::new();
+    loop {
+        // Add/Remove clients
+        match rx.try_recv() {
+            Ok(msg) => {
+                println!("Received registration message");
+
+                match msg {
+                    RegistrationMessage::AddClient { name, tx } => {
+                        println!("Adding client: {}", name);
+                        clients.insert(name, tx);
+                    }
+                    RegistrationMessage::RemoveClient { name } => {
+                        println!("Removing client: {}", name);
+                        clients.remove(&name);
+                    }
+                }
+            }
+
+            _ => {
+                // no msg available, no registration work to do
+            }
+        }
+
+        // TODO: broadcast Output messages
+    }
 }
 
 fn main() {
@@ -72,6 +132,9 @@ fn main() {
     let listener = TcpListener::bind("127.0.0.1:2323").unwrap();
     println!("Starting up...");
     thread::spawn(move || listen(listener, tx));
+
+    let (registration_tx, registration_rx) = channel();
+    thread::spawn(move || dispatch(registration_rx));
 
     for session in rx {
         match session {
@@ -82,7 +145,20 @@ fn main() {
             } => {
                 println!("main says: {} has joined.", name);
                 let (tx2, rx2) = channel();
-                chat_loop(ClientMessage::Session{name, reader, writer}, rx2);
+                registration_tx.send(RegistrationMessage::AddClient {
+                    name: name.clone(),
+                    tx: tx2,
+                });
+                thread::spawn(move || {
+                    chat_loop(
+                        ClientMessage::Session {
+                            name,
+                            reader,
+                            writer,
+                        },
+                        rx2,
+                    )
+                });
             }
             _ => {
                 unimplemented!("Error appropriately on unexpected non-Session first messages")
