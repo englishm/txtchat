@@ -116,7 +116,10 @@ fn chat_loop(
         if input.len() != 0 {
             let msg = format!("{} sez '{}'", name.clone(), input);
             cts_tx
-                .send(ClientToServerMessage::ChatMsg { sender: name.clone(), message: msg })
+                .send(ClientToServerMessage::ChatMsg {
+                    sender: name.clone(),
+                    message: msg,
+                })
                 .unwrap();
             input.truncate(0);
         }
@@ -135,21 +138,23 @@ fn dispatch(cts_rx: Receiver<ClientToServerMessage>) {
                     ClientToServerMessage::RegisterClient { name, tx } => {
                         println!("Adding client: {}", name);
                         clients.insert(name, tx);
-                    },
-                    ClientToServerMessage::ChatMsg { sender, message} =>
-                    {
+                    }
+                    ClientToServerMessage::ChatMsg { sender, message } => {
                         println!("Msg from {}: '{}'", sender, message);
                         for (_name, stc_tx) in &clients {
-                            stc_tx.send(ServerToClientMessage::ChatMsg {
-                                sender: sender.clone(),
-                                message: message.clone(),
-                            })
-                            .unwrap();
+                            stc_tx
+                                .send(ServerToClientMessage::ChatMsg {
+                                    sender: sender.clone(),
+                                    message: message.clone(),
+                                })
+                                .unwrap();
                         }
                     }
                 }
             }
-            Err(_) => todo!()
+            Err(_) => {
+                // channel empty, nothing to do
+            }
         }
     }
 }
@@ -159,5 +164,7 @@ fn main() {
     let listener = TcpListener::bind("127.0.0.1:2323").unwrap();
     println!("Starting up...");
     thread::spawn(move || listen(listener, cts_tx));
-    thread::spawn(move || dispatch(cts_rx));
+    let dispatch_handle = thread::spawn(move || dispatch(cts_rx));
+
+    dispatch_handle.join().unwrap();
 }
