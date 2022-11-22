@@ -40,7 +40,7 @@ fn handle_client(
     // Create ServerToClient chan
     let (stc_tx, stc_rx) = channel();
 
-    // Register out client
+    // Register our client
     cts_tx
         .send(ClientToServerMessage::RegisterClient {
             name: name.clone(),
@@ -48,18 +48,8 @@ fn handle_client(
         })
         .unwrap();
 
-    // We need to tell main/dispatch how to send us server events (tx)
-    // And our name/address
-    // But that's all that main/dispatch really needs
-    //
-    // Then, we want to start our chat/client loop
-    // And that needs to have the read/write ends of our socket
-    // in addition to an rx for server events and a tx to send things up to main/dispatch
-
+    // Start client's loop
     chat_loop(cts_tx, name, stc_rx, reader, writer);
-
-    // Where this got convoluted the first time is that the tx we have here isn't currently going to dispatch,
-    // but just to main, and another channel is created there...
 }
 
 fn listen(sock: TcpListener, cts_tx: Sender<ClientToServerMessage>) {
