@@ -42,13 +42,24 @@ fn handle_client(
     writer.flush().unwrap();
 
     // Initialize session
+    // But not really like this at all... Hmm.
     let session = ClientMessage::Session {
         name: name,
         reader: reader,
         writer: writer,
     };
-
     tx.send(session).unwrap();
+
+    // We need to tell main/dispatch how to send us server events (tx)
+    // And our name/address
+    // But that's all that main/dispatch really needs
+    //
+    // Then, we want to start our chat/client loop
+    // And that needs to have the read/write ends of our socket
+    // in addition to an rx for server events and a tx to send things up to main/dispatch
+
+    // Where this got convoluted the first time is that the tx we have here isn't currently going to dispatch,
+    // but just to main, and another channel is created there...
 }
 
 fn listen(sock: TcpListener, tx: Sender<ClientMessage>) {
