@@ -20,9 +20,6 @@ enum RegistrationMessage {
         name: String,
         tx: Sender<ServerMessage>,
     },
-    RemoveClient {
-        name: String,
-    },
 }
 
 fn handle_client(
@@ -90,21 +87,20 @@ fn chat_loop(session: ClientMessage, rx: Receiver<ServerMessage>, tx: Sender<Ser
                             println!("Writing out message from server");
                             let output = format!("\n{}\n", message);
                             writer.write(output.as_bytes()).unwrap();
-                            writer.flush();
+                            writer.flush().unwrap();
                         }
-                        _ => {}
                     },
                     _ => {}
                 }
 
                 // Then prompt and receive input
                 writer.write(prompt.as_bytes()).unwrap();
-                writer.flush();
+                writer.flush().unwrap();
                 reader.read_line(&mut input).unwrap();
                 let len = input.trim_matches(&['\r', '\n'][..]).len();
                 input.truncate(len);
 
-                if (input.len() != 0) {
+                if input.len() != 0 {
                     let msg = format!("{} sez '{}'", name, input);
                     tx.send(ServerMessage::Output { message: msg }).unwrap();
                     input.truncate(0);
@@ -113,7 +109,6 @@ fn chat_loop(session: ClientMessage, rx: Receiver<ServerMessage>, tx: Sender<Ser
                 // do something with input
             }
         }
-        _ => {}
     }
 }
 
@@ -130,10 +125,6 @@ fn dispatch(rx: Receiver<RegistrationMessage>, rx2: Receiver<ServerMessage>) {
                         println!("Adding client: {}", name);
                         clients.insert(name, tx);
                     }
-                    RegistrationMessage::RemoveClient { name } => {
-                        println!("Removing client: {}", name);
-                        clients.remove(&name);
-                    }
                 }
             }
 
@@ -149,14 +140,13 @@ fn dispatch(rx: Receiver<RegistrationMessage>, rx2: Receiver<ServerMessage>) {
                 match msg {
                     ServerMessage::Output { message } => {
                         // iterate through current clients and send msg on their chans
-                        for (name, chan) in &clients {
+                        for (_name, chan) in &clients {
                             chan.send(ServerMessage::Output {
                                 message: message.clone(),
                             })
                             .unwrap();
                         }
                     }
-                    _ => {}
                 }
             }
             _ => {}
@@ -186,10 +176,12 @@ fn main() {
                 let tx_copy = servermsg_tx.clone();
                 println!("main says: {} has joined.", name);
                 let (tx2, rx2) = channel();
-                registration_tx.send(RegistrationMessage::AddClient {
-                    name: name.clone(),
-                    tx: tx2,
-                });
+                registration_tx
+                    .send(RegistrationMessage::AddClient {
+                        name: name.clone(),
+                        tx: tx2,
+                    })
+                    .unwrap();
                 thread::spawn(move || {
                     chat_loop(
                         ClientMessage::Session {
@@ -201,12 +193,11 @@ fn main() {
                         tx_copy,
                     )
                 });
-                servermsg_tx.send(ServerMessage::Output {
-                    message: format!("{} joined!", name_copy),
-                });
-            }
-            _ => {
-                unimplemented!("Error appropriately on unexpected non-Session first messages")
+                servermsg_tx
+                    .send(ServerMessage::Output {
+                        message: format!("{} joined!", name_copy),
+                    })
+                    .unwrap();
             }
         }
     }
