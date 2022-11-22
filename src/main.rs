@@ -4,28 +4,24 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
-enum ClientMessage {
-    Session {
+enum ClientToServerMessage {
+    RegisterClient {
         name: String,
-        reader: BufReader<TcpStream>,
-        writer: BufWriter<TcpStream>,
+        tx: Sender<ServerToClientMessage>,
+    },
+    ChatMsg {
+        sender: String,
+        message: String,
     },
 }
-enum ServerMessage {
-    Output { message: String },
-}
-
-enum RegistrationMessage {
-    AddClient {
-        name: String,
-        tx: Sender<ServerMessage>,
-    },
+enum ServerToClientMessage {
+    ChatMsg { sender: String, message: String },
 }
 
 fn handle_client(
     mut reader: BufReader<TcpStream>,
     mut writer: BufWriter<TcpStream>,
-    tx: Sender<ClientMessage>,
+    cts_tx: Sender<ClientToServerMessage>,
 ) {
     // Get user's name (later: do some kind of auth)
     let mut name = String::new();
@@ -41,14 +37,16 @@ fn handle_client(
     writer.write(greeting.as_bytes()).unwrap();
     writer.flush().unwrap();
 
-    // Initialize session
-    // But not really like this at all... Hmm.
-    let session = ClientMessage::Session {
-        name: name,
-        reader: reader,
-        writer: writer,
-    };
-    tx.send(session).unwrap();
+    // Create ServerToClient chan
+    let (stc_tx, stc_rx) = channel();
+
+    // Register out client
+    cts_tx
+        .send(ClientToServerMessage::RegisterClient {
+            name: name.clone(),
+            tx: stc_tx,
+        })
+        .unwrap();
 
     // We need to tell main/dispatch how to send us server events (tx)
     // And our name/address
@@ -58,13 +56,15 @@ fn handle_client(
     // And that needs to have the read/write ends of our socket
     // in addition to an rx for server events and a tx to send things up to main/dispatch
 
+    chat_loop(cts_tx, name, stc_rx, reader, writer);
+
     // Where this got convoluted the first time is that the tx we have here isn't currently going to dispatch,
     // but just to main, and another channel is created there...
 }
 
-fn listen(sock: TcpListener, tx: Sender<ClientMessage>) {
+fn listen(sock: TcpListener, cts_tx: Sender<ClientToServerMessage>) {
     for stream in sock.incoming() {
-        let next_tx = tx.clone();
+        let next_tx = cts_tx.clone();
         match stream {
             Ok(stream) => {
                 thread::spawn(move || {
@@ -80,81 +80,68 @@ fn listen(sock: TcpListener, tx: Sender<ClientMessage>) {
     drop(sock);
 }
 
-fn chat_loop(session: ClientMessage, rx: Receiver<ServerMessage>, tx: Sender<ServerMessage>) {
-    match session {
-        ClientMessage::Session {
-            name,
-            mut reader,
-            mut writer,
-        } => {
-            println!("Starting chat loop for {}...", name);
-            let prompt = format!("{}> ", name);
-            let mut input = String::new();
-            loop {
-                // First, write out any message received from the server
-                match rx.try_recv() {
-                    Ok(msg) => match msg {
-                        ServerMessage::Output { message } => {
-                            println!("Writing out message from server");
-                            let output = format!("\n{}\n", message);
-                            writer.write(output.as_bytes()).unwrap();
-                            writer.flush().unwrap();
-                        }
-                    },
-                    _ => {}
+// chat_loop(cts_tx, name, stc_rx, reader, writer);
+fn chat_loop(
+    cts_tx: Sender<ClientToServerMessage>,
+    name: String,
+    stc_rx: Receiver<ServerToClientMessage>,
+    mut reader: BufReader<TcpStream>,
+    mut writer: BufWriter<TcpStream>,
+) {
+    println!("Starting chat loop for {}...", name);
+    let prompt = format!("{}> ", name);
+    let mut input = String::new();
+    loop {
+        // First, write out any message received from the server
+        match stc_rx.try_recv() {
+            Ok(msg) => match msg {
+                ServerToClientMessage::ChatMsg { message, .. } => {
+                    println!("Writing out message from server");
+                    let output = format!("\n{}\n", message);
+                    writer.write(output.as_bytes()).unwrap();
+                    writer.flush().unwrap();
                 }
+            },
+            _ => {}
+        }
 
-                // Then prompt and receive input
-                writer.write(prompt.as_bytes()).unwrap();
-                writer.flush().unwrap();
-                reader.read_line(&mut input).unwrap();
-                let len = input.trim_matches(&['\r', '\n'][..]).len();
-                input.truncate(len);
+        // Then prompt and receive input
+        writer.write(prompt.as_bytes()).unwrap();
+        writer.flush().unwrap();
+        reader.read_line(&mut input).unwrap();
+        let len = input.trim_matches(&['\r', '\n'][..]).len();
+        input.truncate(len);
 
-                if input.len() != 0 {
-                    let msg = format!("{} sez '{}'", name, input);
-                    tx.send(ServerMessage::Output { message: msg }).unwrap();
-                    input.truncate(0);
-                }
-
-                // do something with input
-            }
+        // send input to server as ChatMsg
+        if input.len() != 0 {
+            let msg = format!("{} sez '{}'", name.clone(), input);
+            cts_tx
+                .send(ClientToServerMessage::ChatMsg { sender: name.clone(), message: msg })
+                .unwrap();
+            input.truncate(0);
         }
     }
 }
 
-fn dispatch(rx: Receiver<RegistrationMessage>, rx2: Receiver<ServerMessage>) {
-    let mut clients: HashMap<String, Sender<ServerMessage>> = HashMap::new();
+fn dispatch(cts_rx: Receiver<ClientToServerMessage>) {
+    let mut clients: HashMap<String, Sender<ServerToClientMessage>> = HashMap::new();
     loop {
         // Add/Remove clients
-        match rx.try_recv() {
+        match cts_rx.try_recv() {
             Ok(msg) => {
-                println!("Received registration message");
+                println!("Received message from a client");
 
                 match msg {
-                    RegistrationMessage::AddClient { name, tx } => {
+                    ClientToServerMessage::RegisterClient { name, tx } => {
                         println!("Adding client: {}", name);
                         clients.insert(name, tx);
-                    }
-                }
-            }
-
-            _ => {
-                // no msg available, no registration work to do
-            }
-        }
-
-        // handle server messages
-        match rx2.try_recv() {
-            Ok(msg) => {
-                println!("Received server message");
-
-                match msg {
-                    // broadcast messages
-                    ServerMessage::Output { message } => {
-                        // iterate through current clients and send msg on their chans
-                        for (_name, chan) in &clients {
-                            chan.send(ServerMessage::Output {
+                    },
+                    ClientToServerMessage::ChatMsg { sender, message} =>
+                    {
+                        println!("Msg from {}: '{}'", sender, message);
+                        for (_name, stc_tx) in &clients {
+                            stc_tx.send(ServerToClientMessage::ChatMsg {
+                                sender: sender.clone(),
                                 message: message.clone(),
                             })
                             .unwrap();
@@ -162,55 +149,15 @@ fn dispatch(rx: Receiver<RegistrationMessage>, rx2: Receiver<ServerMessage>) {
                     }
                 }
             }
-            _ => {}
+            Err(_) => todo!()
         }
     }
 }
 
 fn main() {
-    let (tx, rx) = channel();
+    let (cts_tx, cts_rx) = channel();
     let listener = TcpListener::bind("127.0.0.1:2323").unwrap();
     println!("Starting up...");
-    thread::spawn(move || listen(listener, tx));
-
-    let (registration_tx, registration_rx) = channel();
-    let (servermsg_tx, servermsg_rx) = channel();
-    thread::spawn(move || dispatch(registration_rx, servermsg_rx));
-
-    for session in rx {
-        match session {
-            ClientMessage::Session {
-                name,
-                reader,
-                writer,
-            } => {
-                let name_copy = name.clone(); // TODO fix lazy mess
-                let tx_copy = servermsg_tx.clone();
-                println!("main says: {} has joined.", name);
-                let (tx2, rx2) = channel();
-                registration_tx
-                    .send(RegistrationMessage::AddClient {
-                        name: name.clone(),
-                        tx: tx2,
-                    })
-                    .unwrap();
-                thread::spawn(move || {
-                    chat_loop(
-                        ClientMessage::Session {
-                            name: name.clone(),
-                            reader,
-                            writer,
-                        },
-                        rx2,
-                        tx_copy,
-                    )
-                });
-                servermsg_tx
-                    .send(ServerMessage::Output {
-                        message: format!("{} joined!", name_copy),
-                    })
-                    .unwrap();
-            }
-        }
-    }
+    thread::spawn(move || listen(listener, cts_tx));
+    thread::spawn(move || dispatch(cts_rx));
 }
