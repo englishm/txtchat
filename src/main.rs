@@ -133,11 +133,13 @@ fn dispatch(rx: Receiver<RegistrationMessage>, rx2: Receiver<ServerMessage>) {
             }
         }
 
+        // handle server messages
         match rx2.try_recv() {
             Ok(msg) => {
                 println!("Received server message");
 
                 match msg {
+                    // broadcast messages
                     ServerMessage::Output { message } => {
                         // iterate through current clients and send msg on their chans
                         for (_name, chan) in &clients {
@@ -151,7 +153,6 @@ fn dispatch(rx: Receiver<RegistrationMessage>, rx2: Receiver<ServerMessage>) {
             }
             _ => {}
         }
-        // TODO: broadcast Output messages
     }
 }
 
